@@ -29,6 +29,11 @@ classifiers = [
 ]
 dependencies = []
 
+[project.urls]
+Source = "https://github.com/saalse/carl-merge"
+Documentation = "https://github.com/saalse/carl-merge/blob/main/docs/guide.md"
+Issues = "https://github.com/saalse/carl-merge/issues"
+
 [project.scripts]
 carl-merge = "carl_merge.cli:main"
 

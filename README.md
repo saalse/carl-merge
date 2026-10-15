@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src/carl_merge/carl-merge-logo.png" alt="Carl Mergé logo: a moustached man in a hat, drawn in bright purple, pink, green and blue" width="200">
+  <img src="https://github.com/saalse/carl-merge/raw/main/src/carl_merge/carl-merge-logo.png" alt="Carl Mergé logo: a moustached man in a hat, drawn in bright purple, pink, green and blue" width="200">
 </p>
 
 <h1 align="center">Carl Mergé</h1>
@@ -137,7 +137,8 @@ Carl is on PyPI as `carl-merge`.
 
 1. Commit the wheel, a `.github/carl-merge.toml` and a
    `.github/workflows/carl-merge.yml`. Start from the files in
-   [`examples/`](examples/). One command fetches the wheel:
+   [`examples/`](https://github.com/saalse/carl-merge/tree/main/examples).
+   One command fetches the wheel:
 
    ```bash
    python3 -m pip download carl-merge==0.1.1 --no-deps --only-binary :all: -d vendor/
@@ -151,17 +152,17 @@ Carl is on PyPI as `carl-merge`.
    do, then switch it off.
 
 Every step, every permission and every setting is in the
-**[technical guide](docs/guide.md)**:
+**[technical guide](https://github.com/saalse/carl-merge/blob/main/docs/guide.md)**:
 
-- [How it decides, exactly](docs/guide.md#1-how-it-decides-exactly)
-- [Adopting it](docs/guide.md#2-adopting-it)
-- [The GitHub App](docs/guide.md#3-the-github-app)
-- [The ruleset](docs/guide.md#4-the-ruleset)
-- [What it cannot see](docs/guide.md#5-what-it-cannot-see)
-- [Configuration reference](docs/guide.md#6-configuration-reference)
-- [Dry run first](docs/guide.md#7-dry-run-first)
-- [Development](docs/guide.md#8-development)
+- [How it decides, exactly](https://github.com/saalse/carl-merge/blob/main/docs/guide.md#1-how-it-decides-exactly)
+- [Adopting it](https://github.com/saalse/carl-merge/blob/main/docs/guide.md#2-adopting-it)
+- [The GitHub App](https://github.com/saalse/carl-merge/blob/main/docs/guide.md#3-the-github-app)
+- [The ruleset](https://github.com/saalse/carl-merge/blob/main/docs/guide.md#4-the-ruleset)
+- [What it cannot see](https://github.com/saalse/carl-merge/blob/main/docs/guide.md#5-what-it-cannot-see)
+- [Configuration reference](https://github.com/saalse/carl-merge/blob/main/docs/guide.md#6-configuration-reference)
+- [Dry run first](https://github.com/saalse/carl-merge/blob/main/docs/guide.md#7-dry-run-first)
+- [Development](https://github.com/saalse/carl-merge/blob/main/docs/guide.md#8-development)
 
 ## 📄 Licence
 
-[MIT](LICENSE). Use it, fork it, and adapt it to your own forge.
+[MIT](https://github.com/saalse/carl-merge/blob/main/LICENSE). Use it, fork it, and adapt it to your own forge.
