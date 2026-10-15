@@ -24,20 +24,17 @@ on_red_base = "stop"
 # the required status checks of the base branch's rules.
 required_checks = ["lint", "tests"]
 
-# One-sided rules: a change to a matching path, on either side, always waits.
-[[shared_risk]]
-pattern = "pyproject.toml"
-reason = "dependencies"
+# Known shared-risk rules for the stack: lockfiles and tool settings, models,
+# migrations and settings, and CI workflows. See the guide, section 6.
+presets = ["python", "django", "github-actions"]
 
+# One-sided rules for what is particular to this project: a change to a
+# matching path, on either side, always waits.
 [[shared_risk]]
-pattern = "shop/models/**"
-reason = "model definitions and schema"
-
-[[shared_risk]]
-pattern = ".github/workflows/**"
-reason = "CI workflow controls"
+pattern = "shop/services.py"
+reason = "write facade"
 
 # Two-sided rule: waits when both sides ADD a matching file in the same directory.
 [[added_together]]
-pattern = "*/migrations/*.py"
-reason = "migration numbers"
+pattern = "docs/adr/*.md"
+reason = "decision record numbers"

@@ -10,16 +10,32 @@ from dataclasses import dataclass
 from carl_merge.config import Rule
 
 
+def _glob(path: str, pattern: str) -> bool:
+    return fnmatch.fnmatch(path, pattern) or path == pattern
+
+
+def _part(text: str, pattern: str) -> bool:
+    """The part beside `**`: a glob when it holds `*` or `?`, else literal, so
+    a name like `[draft]` keeps meaning itself."""
+    if "*" in pattern or "?" in pattern:
+        return _glob(text, pattern)
+    return text == pattern
+
+
 def path_matches(path: str, pattern: str) -> bool:
+    """`**/S`: some trailing run of segments matches S. `X/**`: some leading
+    run matches X. Anything else: a shell glob, where `*` also crosses `/`."""
+    parts = path.split("/")
     if pattern.startswith("**/"):
         suffix = pattern[3:]
-        return path == suffix or path.endswith("/" + suffix)
-    if pattern.startswith("*/migrations/**"):
+        return any(_part("/".join(parts[i:]), suffix) for i in range(len(parts)))
+    if pattern == "*/migrations/**":
+        # Kept from 0.1.1, where it also matched a top-level migrations/.
         return "/migrations/" in path or path.startswith("migrations/")
     if pattern.endswith("/**"):
         prefix = pattern[:-3]
-        return path == prefix or path.startswith(prefix + "/")
-    return fnmatch.fnmatch(path, pattern) or path == pattern
+        return any(_part("/".join(parts[:i]), prefix) for i in range(1, len(parts) + 1))
+    return _glob(path, pattern)
 
 
 @dataclass(frozen=True)

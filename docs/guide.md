@@ -79,7 +79,9 @@ hidden marker, and the bot posts each comment once per head.
 
    The workflow puts the wheel on `PYTHONPATH`. A pure Python wheel imports
    from the zip, so the runner needs no `pip install`.
-2. Add `.github/carl-merge.toml`. Start from `examples/carl-merge.toml`.
+2. Add `.github/carl-merge.toml`. Start from `examples/carl-merge.toml`, list
+   the presets for your stack, for example `presets = ["python", "django"]`
+   (section 6), and then add rules for what is particular to your project.
 3. Add `.github/workflows/carl-merge.yml`. Start from `examples/carl-merge.yml`.
 4. Create and install the App (section 3) and set up the ruleset (section 4).
 
@@ -220,7 +222,8 @@ There are two backstops:
 
 Add `shared_risk` and `added_together` rules for the places where your project
 couples files that the diff cannot show, such as lockfiles, migrations and
-settings.
+settings. The presets in section 6 cover the common ones for Python, Django
+and GitHub Actions; start there.
 
 ## 6. Configuration reference
 
@@ -239,11 +242,17 @@ reason stops the run with exit code 2.
 | `required_checks` | list of strings | `[]` | Check names that must be green; empty reads the base branch rules |
 | `[[shared_risk]]` | tables | none | One-sided rules: `pattern` and `reason` |
 | `[[added_together]]` | tables | none | Two-sided rules: `pattern` and `reason` |
+| `presets` | list of strings | `[]` | Named sets of `shared_risk` rules, added to your own (below) |
 
-Patterns are paths relative to the repository root. `**/name` matches a file
-at any depth, `dir/**` matches everything below a directory, and anything else
-is a shell glob (`*` also crosses `/`). Either list may be empty, and then only
-a file changed on both sides blocks a bypass.
+Patterns are paths relative to the repository root; one that starts with `/`
+or `./` is refused. `**/name` matches a file at any depth, `dir/**` matches
+everything below a directory, and anything else is a shell glob (`*` also
+crosses `/`). The part after `**/` and before `/**` is a glob too when it
+holds `*` or `?`, so `*/models/**` matches everything under a `models/`
+directory below the root; without them it is taken literally, so
+`docs/[draft]/**` means that one directory.
+Either list may be empty, and then only a file changed on both sides blocks a
+bypass.
 
 From the made-up shop project in `examples/carl-merge.toml`:
 
@@ -252,25 +261,96 @@ ready_label = "ready-to-merge"
 base_branch = "main"
 ci_workflow = "ci.yml"
 dry_run = true
+presets = ["python", "django", "github-actions"]
 
 [[shared_risk]]
-pattern = "pyproject.toml"
-reason = "dependencies"
+pattern = "shop/services.py"
+reason = "write facade"
 
 [[added_together]]
-pattern = "*/migrations/*.py"
-reason = "migration numbers"
+pattern = "docs/adr/*.md"
+reason = "decision record numbers"
 ```
 
-With that file, two pull requests that each add a file under `shop/migrations/`
-wait for each other, two that add migrations in different apps do not, and
-neither does one that only edits an existing migration.
+With that file, a behind pull request waits whenever either side changed a
+model, a migration, a lockfile, a workflow or `shop/services.py`. Two pull
+requests that each add a decision record under `docs/adr/` wait for each
+other, and one that only edits an existing record does not.
 
 The command line is `python3 -m carl_merge run [--config PATH] [--dry-run]`.
 It reads `CARL_MERGE_TOKEN`, `CARL_MERGE_APP_SLUG` and `GITHUB_REPOSITORY`, and
 prints one line per action. Exit code 0 means a pass ran, 2 a setup error, and
 3 a failure that is not one pull request's (401, 403, 5xx, a rate limit); a pass
 that had already bypass-merged still dispatches before it exits.
+
+### Presets
+
+`presets = ["python", "django"]` adds each named preset's `shared_risk` rules
+to your own. Nothing is on unless you list it. A preset can only make Carl
+wait more, never less, so one that matches too much costs CI runs, not
+safety.
+
+- Your own rules come first, then each preset's in the order you list them. A
+  preset rule whose pattern you already have is left out, so your reason
+  wins; write the same pattern with your own reason to relabel it.
+- A preset is all or nothing. To use most of one, leave it out and copy the
+  rules you want from the tables below into your own config.
+- In a wait comment a preset rule's line ends with its preset, for example
+  `shop/models/order.py (Django model definitions; preset django)`. A line
+  without one comes from your own config.
+- An unknown or repeated name stops the run with exit code 2.
+
+#### `django`
+
+| Pattern | Reason | Example |
+|---|---|---|
+| `**/models.py` | Django model definitions | `billing/models.py` |
+| `*/models/*.py` | Django model definitions | `shop/models/order.py` |
+| `*/migrations/*.py` | Django migrations: the schema tests run on | `shop/migrations/0145_order_status.py` |
+| `**/settings.py` | Django settings | `site/settings.py` |
+| `*/settings/*.py` | Django settings | `site/settings/base.py` |
+
+Migrations are one-sided here: a migration on the base branch changes the
+schema every test runs on, whether or not the pull request adds one. So you
+need no `added_together` rule for migrations next to this preset.
+
+#### `python`
+
+| Pattern | Reason | Example |
+|---|---|---|
+| `**/pyproject.toml` | dependencies and tool settings | `pyproject.toml` |
+| `**/uv.lock` | locked dependencies | `uv.lock` |
+| `**/poetry.lock` | locked dependencies | `poetry.lock` |
+| `**/pdm.lock` | locked dependencies | `pdm.lock` |
+| `**/Pipfile` | dependencies | `Pipfile` |
+| `**/Pipfile.lock` | locked dependencies | `Pipfile.lock` |
+| `**/requirements*.txt` | dependencies | `requirements/dev.txt` |
+| `**/requirements*.in` | dependencies | `requirements-dev.in` |
+| `**/setup.py` | packaging and tool settings | `setup.py` |
+| `**/setup.cfg` | packaging and tool settings | `setup.cfg` |
+| `**/tox.ini` | tool settings | `tox.ini` |
+| `**/ruff.toml` | lint settings | `ruff.toml` |
+| `**/.ruff.toml` | lint settings | `.ruff.toml` |
+| `**/mypy.ini` | type-check settings | `mypy.ini` |
+| `**/pytest.ini` | test settings | `pytest.ini` |
+| `**/.python-version` | Python version | `.python-version` |
+| `**/conftest.py` | pytest fixtures shared across tests | `tests/billing/conftest.py` |
+
+Tool settings count because the base enabling a lint rule or an import
+contract while a pull request adds code that breaks it is the same
+file-disjoint clash, red on lint instead of tests. If your `pyproject.toml`
+changes in many merges, this preset makes many pull requests wait; you may
+prefer to leave it out and add a rule for your lockfile alone.
+
+#### `github-actions`
+
+| Pattern | Reason | Example |
+|---|---|---|
+| `.github/workflows/**` | CI workflows | `.github/workflows/ci.yml` |
+| `.github/actions/**` | CI composite actions | `.github/actions/setup/action.yml` |
+
+`.github/carl-merge.toml` is not covered: the bot reads its config from the
+default branch, and no test depends on it.
 
 ## 7. Dry run first
 
