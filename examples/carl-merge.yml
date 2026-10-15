@@ -1,0 +1,43 @@
+# .github/workflows/carl-merge.yml in the adopting repository.
+#
+# The job checks out the default branch only and never runs a pull request's
+# code. It fetches pull request heads as objects for `git diff`. That is what
+# makes `pull_request_target` safe here.
+#
+# A label added by another workflow's own job token starts no run. If a
+# workflow applies the ready label, list it under `workflow_run` as well.
+name: Carl Mergé
+on:
+  pull_request_target:
+    types: [labeled]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  push:
+    branches: [main]
+  workflow_dispatch:
+concurrency:
+  group: carl-merge
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+      - id: token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.CARL_MERGE_CLIENT_ID }}
+          private-key: ${{ secrets.CARL_MERGE_PRIVATE_KEY }}
+      - name: "Run one pass"
+        env:
+          CARL_MERGE_TOKEN: ${{ steps.token.outputs.token }}
+          CARL_MERGE_APP_SLUG: ${{ steps.token.outputs.app-slug }}
+          PYTHONPATH: vendor/carl_merge-0.1.1-py3-none-any.whl
+        run: python3 -m carl_merge run --config .github/carl-merge.toml

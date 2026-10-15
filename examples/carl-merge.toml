@@ -1,0 +1,31 @@
+# .github/carl-merge.toml in the adopting repository. A made-up shop project.
+
+ready_label = "ready-to-merge"
+base_branch = "main"
+# The full workflow: the bot dispatches it after a pass that bypass-merged, and
+# merges nothing while its latest completed run on the base branch is red.
+ci_workflow = "ci.yml"
+merge_method = "squash"   # "merge" (the default) or "squash"
+dry_run = true            # the default; read one batch of "Dry run:" comments first
+
+# The checks that must be green on a head before it merges. Leave it out to use
+# the required status checks of the base branch's rules.
+required_checks = ["lint", "tests"]
+
+# One-sided rules: a change to a matching path, on either side, always waits.
+[[shared_risk]]
+pattern = "pyproject.toml"
+reason = "dependencies"
+
+[[shared_risk]]
+pattern = "shop/models/**"
+reason = "model definitions and schema"
+
+[[shared_risk]]
+pattern = ".github/workflows/**"
+reason = "CI workflow controls"
+
+# Two-sided rule: waits when both sides ADD a matching file in the same directory.
+[[added_together]]
+pattern = "*/migrations/*.py"
+reason = "migration numbers"

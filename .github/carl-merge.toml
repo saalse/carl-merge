@@ -1,0 +1,23 @@
+# Carl Mergé merges its own pull requests. Label one `ready-to-merge`.
+
+ready_label = "ready-to-merge"
+base_branch = "main"
+ci_workflow = "ci.yml"
+dry_run = true            # read one batch of "Dry run:" comments first
+required_checks = ["tests"]
+
+[[shared_risk]]
+pattern = "pyproject.toml"
+reason = "dependencies and the version"
+
+[[shared_risk]]
+pattern = "uv.lock"
+reason = "the lockfile"
+
+[[shared_risk]]
+pattern = ".github/**"
+reason = "workflows and the bot's own settings"
+
+[[shared_risk]]
+pattern = "vendor/**"
+reason = "the wheel the bot runs from"

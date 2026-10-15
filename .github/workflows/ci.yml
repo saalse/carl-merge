@@ -1,0 +1,31 @@
+# Runs the tests and the linters on every pull request and on main.
+#
+# Carl Mergé reads the check by its job name, `tests`, and dispatches this
+# workflow on main after a pass that bypass-merged, so keep both the name and
+# `workflow_dispatch`.
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  tests:
+    name: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: "Install"
+        run: uv sync --locked
+      - name: "Run the tests"
+        run: uv run --locked pytest
+      - name: "Lint"
+        run: uv run ruff check
+      - name: "Check formatting"
+        run: uv run ruff format --check
