@@ -2,8 +2,10 @@
 
 import json
 import re
+import socket
 import stat
 import subprocess
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -11,6 +13,7 @@ from importlib.resources import files
 
 import pytest
 
+import carl_merge.create_app as create_app_module
 from carl_merge import cli
 from carl_merge.create_app import (
     LOGO_FILE,
@@ -24,6 +27,7 @@ from carl_merge.create_app import (
     save_logo,
     settings_url,
     store,
+    wait_for_code,
 )
 
 PEM = "-----BEGIN RSA PRIVATE KEY-----\nkey-secret-value\n-----END-----\n"
@@ -180,6 +184,59 @@ def test_failed_secret_set_leaves_the_key_in_an_owner_only_file(tmp_path):
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert len(left) == 1 and str(path) in left[0]
     assert "key-secret-value" not in left[0]
+
+
+@pytest.mark.unit
+def test_a_key_file_already_there_is_kept_and_the_key_goes_beside_it(tmp_path):
+    earlier = tmp_path / "carl-merge-acme.private-key.pem"
+    earlier.write_text("earlier key")
+    left = store(APP, "al/app", FakeGh(fail={"secret"}), key_dir=tmp_path)
+    path = tmp_path / "carl-merge-acme.private-key-2.pem"
+    assert earlier.read_text() == "earlier key"
+    assert path.read_text() == PEM
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert str(path) in left[0]
+
+
+@pytest.mark.unit
+def test_waiting_for_github_gives_up_with_a_message():
+    with pytest.raises(CreateAppError, match="no answer from GitHub"):
+        wait_for_code(
+            "https://github.com/settings/apps/new?state=s",
+            lambda callback: {},
+            "s",
+            open_page=lambda url: None,
+            log=lambda line: None,
+            wait=0.5,
+        )
+
+
+@pytest.mark.unit
+def test_an_idle_browser_connection_does_not_block_the_callback(monkeypatch):
+    """A preconnect socket that never sends a request is dropped, not waited on."""
+    monkeypatch.setattr(create_app_module, "CONNECTION_TIMEOUT", 0.5)
+    open_page, _seen = github()
+    idle = []
+
+    def browser(start):
+        if not start.startswith("https://github.com/"):
+            parts = urllib.parse.urlsplit(start)
+            idle.append(socket.create_connection((parts.hostname, parts.port)))
+        open_page(start)
+
+    started = time.monotonic()
+    code = wait_for_code(
+        "https://github.com/settings/apps/new?state=s",
+        lambda callback: manifest("al/app", "Carl Mergé al", callback),
+        "s",
+        open_page=browser,
+        log=lambda line: None,
+        wait=30,
+    )
+    assert code == "one-time-code"
+    assert time.monotonic() - started < 10
+    for sock in idle:
+        sock.close()
 
 
 @pytest.mark.unit

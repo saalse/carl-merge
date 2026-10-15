@@ -20,6 +20,7 @@ import os
 import secrets
 import subprocess
 import threading
+import time
 import urllib.parse
 import urllib.request
 import webbrowser
@@ -46,6 +47,10 @@ PERMISSIONS = {
 }
 NO_WEBHOOK = {"url": "https://example.com/carl-merge-uses-no-webhook", "active": False}
 LOGO_FILE = "carl-merge-logo.png"
+WAIT_FOR_GITHUB = 15 * 60
+# A connection that sends nothing (a browser preconnect) is dropped after this,
+# so it cannot hold the one-at-a-time server past its deadline.
+CONNECTION_TIMEOUT = 5
 
 
 class CreateAppError(Exception):
@@ -123,11 +128,15 @@ def wait_for_code(
     state: str,
     open_page: Callable[[str], object] = webbrowser.open,
     log: Callable[[str], None] = print,
+    wait: float = WAIT_FOR_GITHUB,
 ) -> str:
-    """Serve the form once, then return the code GitHub hands back."""
+    """Serve the form, then return the code GitHub hands back, or give up
+    after `wait` seconds."""
     found: dict[str, str] = {}
 
     class Handler(BaseHTTPRequestHandler):
+        timeout = CONNECTION_TIMEOUT
+
         def log_message(self, *args) -> None:
             pass
 
@@ -147,19 +156,26 @@ def wait_for_code(
             elif parts.path == "/callback" and query.get("state") == [state]:
                 found["code"] = query.get("code", [""])[0]
                 self._reply(200, DONE_PAGE)
-                threading.Thread(target=server.shutdown, daemon=True).start()
             else:
                 self._reply(404, b"not found")
 
     server = HTTPServer(("127.0.0.1", 0), Handler)
+    server.timeout = 1
     port = server.server_address[1]
     start = urllib.parse.urlunsplit(("http", f"127.0.0.1:{port}", "/", "", ""))
     callback = urllib.parse.urljoin(start, "/callback")
     log(f"Opening {start} to create the App. Open it yourself if no browser starts.")
     threading.Thread(target=open_page, args=(start,), daemon=True).start()
+    deadline = time.monotonic() + wait
     with server:
-        server.serve_forever()
-    if not found.get("code"):
+        while "code" not in found and time.monotonic() < deadline:
+            server.handle_request()
+    if "code" not in found:
+        minutes = max(1, round(wait / 60))
+        raise CreateAppError(
+            f"no answer from GitHub in {minutes} min; run create-app again"
+        )
+    if not found["code"]:
         raise CreateAppError("GitHub sent back no code")
     return found["code"]
 
@@ -203,14 +219,27 @@ def store(app: App, repo: str, gh=_gh, key_dir: Path | None = None) -> list[str]
         left.append(f"set the variable {CLIENT_ID_VARIABLE} to {app.client_id}")
     secret = gh(["secret", "set", PRIVATE_KEY_SECRET, "--repo", repo], stdin=app.pem)
     if secret.returncode != 0:
-        path = (key_dir or Path.cwd()) / f"{app.slug}.private-key.pem"
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w") as handle:
-            handle.write(app.pem)
+        path = _key_file(app, key_dir or Path.cwd())
         left.append(
             f"store {path} as the secret {PRIVATE_KEY_SECRET}, then delete the file"
         )
     return left
+
+
+def _key_file(app: App, directory: Path) -> Path:
+    """Write the key to a new owner-only file; never overwrite one already there,
+    since it may hold the key of an earlier App."""
+    for attempt in range(1, 100):
+        suffix = "" if attempt == 1 else f"-{attempt}"
+        path = directory / f"{app.slug}.private-key{suffix}.pem"
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            continue
+        with os.fdopen(fd, "w") as handle:
+            handle.write(app.pem)
+        return path
+    raise CreateAppError(f"no free file name for the key in {directory}")
 
 
 def next_steps(app: App, left: list[str], logo: Path, settings: str) -> list[str]:
