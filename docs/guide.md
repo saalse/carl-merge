@@ -72,10 +72,10 @@ hidden marker, and the bot posts each comment once per head.
 1. Download the wheel from PyPI and commit it to your repository:
 
    ```bash
-   python3 -m pip download carl-merge==0.1.1 --no-deps --only-binary :all: -d vendor/
+   python3 -m pip download carl-merge==0.2.0 --no-deps --only-binary :all: -d vendor/
    ```
 
-   That saves `vendor/carl_merge-0.1.1-py3-none-any.whl`.
+   That saves `vendor/carl_merge-0.2.0-py3-none-any.whl`.
 
    The workflow puts the wheel on `PYTHONPATH`. A pure Python wheel imports
    from the zip, so the runner needs no `pip install`.
@@ -118,7 +118,7 @@ uvx carl-merge create-app --repo OWNER/NAME
 `uv`, run it from the committed wheel (section 2) instead:
 
 ```bash
-PYTHONPATH=vendor/carl_merge-0.1.1-py3-none-any.whl \
+PYTHONPATH=vendor/carl_merge-0.2.0-py3-none-any.whl \
   python3 -m carl_merge create-app --repo OWNER/NAME
 ```
 

@@ -1,6 +1,6 @@
 [project]
 name = "carl-merge"
-version = "0.1.1"
+version = "0.2.0"
 description = "A merge bot for repositories where several AI coding agents open pull requests in parallel: it bypass-merges a behind pull request when main changed nothing it touches, so CI is not rerun for nothing."
 readme = "README.md"
 license = "MIT"

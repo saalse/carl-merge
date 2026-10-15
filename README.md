@@ -141,7 +141,7 @@ Carl is on PyPI as `carl-merge`.
    One command fetches the wheel:
 
    ```bash
-   python3 -m pip download carl-merge==0.1.1 --no-deps --only-binary :all: -d vendor/
+   python3 -m pip download carl-merge==0.2.0 --no-deps --only-binary :all: -d vendor/
    ```
 
 2. Run `uvx carl-merge create-app --repo OWNER/NAME`. It creates your own GitHub

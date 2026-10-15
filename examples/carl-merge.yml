@@ -39,5 +39,5 @@ jobs:
         env:
           CARL_MERGE_TOKEN: ${{ steps.token.outputs.token }}
           CARL_MERGE_APP_SLUG: ${{ steps.token.outputs.app-slug }}
-          PYTHONPATH: vendor/carl_merge-0.1.1-py3-none-any.whl
+          PYTHONPATH: vendor/carl_merge-0.2.0-py3-none-any.whl
         run: python3 -m carl_merge run --config .github/carl-merge.toml
