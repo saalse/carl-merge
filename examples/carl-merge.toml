@@ -8,6 +8,18 @@ ci_workflow = "ci.yml"
 merge_method = "squash"   # "merge" (the default) or "squash"
 dry_run = true            # the default; read one batch of "Dry run:" comments first
 
+# On a red base: "stop" (the default) merges nothing; "merge-tested" still
+# merges a PR that is up to date and whose required checks ran on the base head.
+# Only worth it when the required checks are the full suite.
+on_red_base = "stop"
+# on_red_base = "merge-tested"
+
+# The events whose ci_workflow runs decide whether the base is red. Left out, it
+# counts every event but pull requests. If push runs skip the tests, list only
+# the events whose runs are the full suite, always with workflow_dispatch, the
+# runs the bot starts:
+# base_events = ["workflow_dispatch", "schedule"]
+
 # The checks that must be green on a head before it merges. Leave it out to use
 # the required status checks of the base branch's rules.
 required_checks = ["lint", "tests"]

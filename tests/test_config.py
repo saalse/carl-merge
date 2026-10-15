@@ -65,6 +65,40 @@ def test_defaults_are_safe():
     assert config.required_checks == ()
     assert config.shared_risk == ()
     assert config.added_together == ()
+    assert config.on_red_base == "stop"
+    assert config.base_events == ()
+
+
+@pytest.mark.unit
+def test_the_red_base_keys_are_read():
+    config = _config().parse(
+        MINIMAL
+        + 'on_red_base = "merge-tested"\n'
+        + 'base_events = ["workflow_dispatch", "schedule"]\n'
+    )
+    assert config.on_red_base == "merge-tested"
+    assert config.base_events == ("workflow_dispatch", "schedule")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "extra",
+    [
+        'on_red_base = "merge"\n',
+        "on_red_base = true\n",
+        "base_events = []\n",
+        'base_events = "push"\n',
+        'base_events = [""]\n',
+        'base_events = ["push", "pull_request"]\n',
+        'base_events = ["pull_request_target"]\n',
+        'base_events = ["schedule"]\n',
+        'base_events = ["push"]\n',
+    ],
+)
+def test_a_wrong_red_base_value_is_refused(extra: str):
+    config = _config()
+    with pytest.raises(config.ConfigError):
+        config.parse(MINIMAL + extra)
 
 
 @pytest.mark.unit
@@ -99,3 +133,27 @@ def test_a_wrong_or_unknown_value_is_refused(extra: str):
     config = _config()
     with pytest.raises(config.ConfigError):
         config.parse(MINIMAL + extra)
+
+
+@pytest.mark.unit
+def test_an_unknown_event_name_is_kept_with_a_warning():
+    config = _config()
+    parsed = config.parse(MINIMAL + 'base_events = ["workflow_dispatch", "schedul"]\n')
+    assert parsed.base_events == ("workflow_dispatch", "schedul")
+    assert len(parsed.warnings) == 1
+    assert "schedul" in parsed.warnings[0]
+    clean = config.parse(MINIMAL + 'base_events = ["workflow_dispatch", "schedule"]\n')
+    assert clean.warnings == ()
+
+
+@pytest.mark.unit
+def test_the_command_line_prints_config_warnings(tmp_path, monkeypatch, capsys):
+    from carl_merge import cli
+
+    path = tmp_path / "carl-merge.toml"
+    path.write_text(MINIMAL + 'base_events = ["workflow_dispatch", "schedul"]\n')
+    for name in cli.ENV:
+        monkeypatch.delenv(name, raising=False)
+    assert cli.main(["run", "--config", str(path)]) == 2
+    err = capsys.readouterr().err
+    assert "carl-merge: warning: base_events: schedul" in err

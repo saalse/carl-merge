@@ -32,7 +32,10 @@ class FakeForge:
     def __init__(self) -> None:
         self.forge = _module("forge")
         self.base = "b0"
-        self.red = False
+        self.red = None
+        self.tested = "t0"
+        self.open_runs: set[str] = set()
+        self.merged_by_sha: dict[str, list[int]] = {}
         self.pulls: dict[int, dict] = {}
         self.checks_by_sha: dict[str, str] = {}
         self.bodies: dict[int, list[str]] = {}
@@ -89,6 +92,9 @@ class FakeForge:
             fork=p["fork"],
         )
 
+    def listed_head(self, number):
+        return self.pulls[number]["head_sha"]
+
     def base_head(self, branch):
         self.events.append(("base",))
         if self.move_base_on_next_read:
@@ -98,6 +104,12 @@ class FakeForge:
 
     def base_red(self, workflow, branch):
         return self.red
+
+    def base_run_open(self, workflow, branch, sha):
+        return sha in self.open_runs
+
+    def merged_pulls(self, sha, since=None):
+        return self.merged_by_sha.get(sha, [])
 
     def checks(self, number, sha):
         self.events.append(("checks", number, sha))
@@ -110,7 +122,7 @@ class FakeForge:
         return state
 
     def tested_base(self, number, sha):
-        return "t0"
+        return self.tested
 
     def comment_bodies(self, number):
         return list(self.bodies[number])
@@ -292,7 +304,7 @@ def test_row_5_red_or_unknown_required_checks_cannot_be_decided(state: str):
 @pytest.mark.unit
 def test_row_6_red_base_merges_nothing():
     forge = FakeForge()
-    forge.red = True
+    forge.red = _module("forge").Run(9, "https://github.com/x/y/runs/9", "b0", "push")
     forge.add(1, "h1")
     forge.add(2, "h2", behind=True)
     report = _run(forge, Overlap({2: "disjoint"}))

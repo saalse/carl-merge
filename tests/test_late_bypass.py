@@ -94,7 +94,7 @@ class Fake:
         return self.base
 
     def base_red(self, workflow, branch):
-        return False
+        return None
 
     def checks(self, number, sha):
         return "green"

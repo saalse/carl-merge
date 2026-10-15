@@ -2,28 +2,31 @@
 
 from __future__ import annotations
 
+import dataclasses
 import re
 import time
 import urllib.parse
 from collections.abc import Iterator
 from typing import Any, Protocol
 
+from carl_merge.config import PULL_REQUEST_EVENTS
 from carl_merge.forge import (
     ForgeError,
     HeadMoved,
     MergeRefused,
     MergeTimeout,
     Pull,
+    Run,
     UpdateConflict,
 )
 
 RED_RUNS = ("failure", "timed_out", "startup_failure", "action_required")
 IGNORED_RUNS = ("cancelled", "skipped", "neutral")
-PULL_REQUEST_EVENTS = ("pull_request", "pull_request_target")
 GREEN_CHECKS = ("success", "skipped", "neutral")
 OPEN_RUN_STATES = ("queued", "in_progress", "waiting", "pending", "requested")
 MERGE_POLLS = 30
 MAX_RUN_PAGES = 5
+MAX_BLAME_COMMITS = 30
 MERGE_WAIT = 2
 _UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F-]{27}$")
 _SEVERITY = {"green": 0, "pending": 1, "red": 2}
@@ -93,6 +96,10 @@ def _uuid(data: Any) -> str:
     raise ForgeError("merge-async: no request id in the reply")
 
 
+def _parents(commit: dict) -> list[str]:
+    return [parent["sha"] for parent in commit.get("parents", [])]
+
+
 def _commit(data: dict) -> str:
     for key in ("merge_commit_oid", "merge_commit_sha", "sha", "oid", "commit"):
         if isinstance(data.get(key), str):
@@ -109,6 +116,7 @@ class RestForge:
         app_slug: str,
         base_branch: str,
         required_checks: tuple[str, ...] = (),
+        base_events: tuple[str, ...] = (),
         sleep=time.sleep,
     ) -> None:
         self._wire = wire
@@ -116,6 +124,8 @@ class RestForge:
         self._author = f"{app_slug}[bot]"
         self._base_branch = base_branch
         self._required = required_checks
+        self._base_events = base_events
+        self._listed: dict[int, str] = {}
         self._sleep = sleep
 
     def _get(self, path: str, **params: Any) -> Any:
@@ -134,9 +144,15 @@ class RestForge:
                 "per_page": 100,
             },
         )
-        return sorted(
-            p["number"] for p in found if label in [x["name"] for x in p["labels"]]
-        )
+        ready = [p for p in found if label in [x["name"] for x in p["labels"]]]
+        self._listed = {p["number"]: p["head"]["sha"] for p in ready}
+        return sorted(self._listed)
+
+    def listed_head(self, number: int) -> str:
+        """The head the last `ready_pulls` listing saw, read afresh if not listed."""
+        if number in self._listed:
+            return self._listed[number]
+        return self._get(f"/pulls/{number}")["head"]["sha"]
 
     def pull(self, number: int) -> Pull:
         data = self._get(f"/pulls/{number}")
@@ -161,30 +177,74 @@ class RestForge:
     def base_head(self, branch: str) -> str:
         return self._get(f"/branches/{_q(branch)}")["commit"]["sha"]
 
-    def base_red(self, workflow: str, branch: str) -> bool:
-        """Is the latest countable completed run on the branch a failure?
+    def _counts(self, event: str | None) -> bool:
+        """Does a run with this event say anything about the base branch?"""
+        if self._base_events:
+            return event in self._base_events
+        return event not in PULL_REQUEST_EVENTS
 
-        Pull request runs, and cancelled, skipped and neutral runs, do not
-        count. Pages are read until a countable run turns up. A history with
-        none at all is not red; one with none in the pages allowed is unknown,
-        and unknown stops the pass.
+    def _runs(self, workflow: str) -> str:
+        return f"{self._repo}/actions/workflows/{_q(workflow)}/runs"
+
+    def base_red(self, workflow: str, branch: str) -> Run | None:
+        """The run that makes the branch red, or None when it is not red.
+
+        A completed run counts when its event does (`base_events`, by default
+        every event but pull requests) and it is not cancelled, skipped or
+        neutral. The commit of the newest counted run decides, and on that
+        commit a red run outranks a green one, whichever was created first.
+        Runs are read newest first until the first counted run on another
+        commit; for a red dispatched run, that commit is kept as `since`. A
+        history with none at all is not red. When the pages allowed hold no
+        counted run, the colour is unknown, and unknown stops the pass. When
+        they end still on the deciding commit with no red run, that many green
+        runs on one commit are its verdict: not red.
         """
         pages = self._wire.iter_pages(
-            f"{self._repo}/actions/workflows/{_q(workflow)}/runs",
+            self._runs(workflow),
             params={"branch": branch, "status": "completed", "per_page": 100},
             key="workflow_runs",
         )
+        deciding = None
+        red: Run | None = None
         for number, page in enumerate(pages, 1):
             if number > MAX_RUN_PAGES:
-                raise ForgeError(
-                    f"no countable {workflow} run in {MAX_RUN_PAGES} pages"
-                )
+                if red is not None:
+                    return red
+                if deciding is None:
+                    raise ForgeError(
+                        f"no countable {workflow} run in {MAX_RUN_PAGES} pages"
+                    )
+                return None
             for run in page:
-                if run.get("event") in PULL_REQUEST_EVENTS:
+                if run["conclusion"] in IGNORED_RUNS:
                     continue
-                if run["conclusion"] not in IGNORED_RUNS:
-                    return run["conclusion"] in RED_RUNS
-        return False
+                if not self._counts(run.get("event")):
+                    continue
+                if deciding is None:
+                    deciding = run["head_sha"]
+                elif run["head_sha"] != deciding:
+                    if red is None:
+                        return None
+                    return dataclasses.replace(red, since=run["head_sha"])
+                if red is None and run["conclusion"] in RED_RUNS:
+                    red = Run(run["id"], run["html_url"], deciding, run["event"])
+                    if red.event != "workflow_dispatch":
+                        # Only a dispatched run is traced back to its merges.
+                        return red
+        return red
+
+    def base_run_open(self, workflow: str, branch: str, sha: str) -> bool:
+        """Is a counted run of the workflow queued or in progress on the commit?"""
+        runs = self._wire.pages(
+            self._runs(workflow),
+            params={"branch": branch, "head_sha": sha, "per_page": 100},
+            key="workflow_runs",
+        )
+        return any(
+            run["status"] != "completed" and self._counts(run.get("event"))
+            for run in runs
+        )
 
     def _requirements(self) -> list[tuple[str, int | None]]:
         """Each required check as `(name, integration id or None)`."""
@@ -278,6 +338,43 @@ class RestForge:
             for c in found
             if (c.get("user") or {}).get("login") == self._author
         ]
+
+    def merged_pulls(self, sha: str, since: str | None = None) -> list[int]:
+        """The merged pull requests whose merge commit is `sha`, or, with
+        `since`, any commit on the base from `sha` back to `since`.
+
+        The base's own commits are its first-parent chain: one merge or squash
+        commit per pull request, whatever the merge method, and none of a
+        merged branch's own commits. The chain is read newest first, at most
+        `MAX_BLAME_COMMITS` long.
+        """
+        found = set()
+        for commit in self._first_parents(sha, since):
+            for pr in self._get(f"/commits/{commit}/pulls", per_page=100):
+                if pr.get("merged_at") and pr.get("merge_commit_sha") == commit:
+                    found.add(pr["number"])
+        return sorted(found)
+
+    def _first_parents(self, sha: str, since: str | None) -> list[str]:
+        """`sha` and its first parents, newest first, until `since` or the cap.
+
+        One listing of the history behind `sha` holds most parents. A merged
+        branch's own commits can crowd a base commit out of it, so a commit
+        the listing lacks is read on its own.
+        """
+        if since is None:
+            return [sha]
+        listed = self._get("/commits", sha=sha, per_page=100)
+        parents = {c["sha"]: _parents(c) for c in listed}
+        chain: list[str] = []
+        commit: str | None = sha
+        while commit and commit != since and len(chain) < MAX_BLAME_COMMITS:
+            chain.append(commit)
+            if commit not in parents:
+                parents[commit] = _parents(self._get(f"/commits/{commit}"))
+            up = parents[commit]
+            commit = up[0] if up else None
+        return chain
 
     def closed_with_label(self, label: str) -> list[int]:
         """The closed pull requests, not issues, that carry the label."""

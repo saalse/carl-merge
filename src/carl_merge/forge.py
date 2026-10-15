@@ -40,14 +40,35 @@ class Pull:
     merged: bool = False
 
 
+@dataclass(frozen=True)
+class Run:
+    """A workflow run on the base branch: the one that makes it red.
+
+    `since` is the commit of the counted run before it, when one was read: the
+    red run tested every merge after that commit.
+    """
+
+    id: int
+    html_url: str
+    head_sha: str
+    event: str
+    since: str | None = None
+
+
 class Forge(Protocol):
     def ready_pulls(self, label: str, base: str) -> list[int]: ...
 
     def pull(self, number: int) -> Pull: ...
 
+    def listed_head(self, number: int) -> str: ...
+
     def base_head(self, branch: str) -> str: ...
 
-    def base_red(self, workflow: str, branch: str) -> bool: ...
+    def base_red(self, workflow: str, branch: str) -> Run | None: ...
+
+    def base_run_open(self, workflow: str, branch: str, sha: str) -> bool: ...
+
+    def merged_pulls(self, sha: str, since: str | None = None) -> list[int]: ...
 
     def checks(self, number: int, sha: str) -> str: ...
 

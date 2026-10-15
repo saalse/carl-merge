@@ -91,7 +91,9 @@ flowchart TD
 - **Overlapping?** Update the branch and let CI earn its keep this time.
 - **Not sure?** Say so and do nothing. Carl never guesses.
 - **Bypassed anything?** Run the full suite once on `main` afterwards, so the
-  combined code is always tested. While `main` is red, Carl merges nothing.
+  combined code is always tested. While `main` is red, Carl merges nothing
+  and says so on each waiting pull request, or, if you opt in, merges only
+  what was tested on `main` as it is.
 
 Five green pull requests that touch different corners of the code go in back
 to back, and CI runs once on the result instead of four extra times on stale

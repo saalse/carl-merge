@@ -89,15 +89,24 @@ def test_ready_pulls_keeps_the_label_and_sorts():
         "GET",
         f"{REPO}/pulls",
         [
-            {"number": 9, "labels": labelled},
-            {"number": 3, "labels": [{"name": "docs"}]},
-            {"number": 4, "labels": labelled},
+            {"number": 9, "labels": labelled, "head": {"sha": "h9"}},
+            {"number": 3, "labels": [{"name": "docs"}], "head": {"sha": "h3"}},
+            {"number": 4, "labels": labelled, "head": {"sha": "h4"}},
         ],
     )
-    assert make(wire).ready_pulls("ready-to-merge", "main") == [4, 9]
+    rest = make(wire)
+    assert rest.ready_pulls("ready-to-merge", "main") == [4, 9]
+    assert (rest.listed_head(4), rest.listed_head(9)) == ("h4", "h9")
     params = wire.sent("GET", f"{REPO}/pulls")[0][2]
     assert params["base"] == "main"
     assert params["direction"] == "asc"
+
+
+@pytest.mark.unit
+def test_listed_head_reads_a_pull_request_the_listing_did_not_hold():
+    wire = Wire()
+    wire.on("GET", f"{REPO}/pulls/5", ok({"head": {"sha": "h5"}}))
+    assert make(wire).listed_head(5) == "h5"
 
 
 @pytest.mark.unit
@@ -137,6 +146,17 @@ def test_base_head_reads_the_branch():
     assert make(wire).base_head("main") == "b" * 40
 
 
+def wf_run(conclusion, sha, *, event="push", id=1, status="completed"):
+    return {
+        "id": id,
+        "html_url": f"https://github.com/example/shop/actions/runs/{id}",
+        "head_sha": sha,
+        "event": event,
+        "status": status,
+        "conclusion": conclusion,
+    }
+
+
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "conclusions, red",
@@ -152,9 +172,9 @@ def test_base_head_reads_the_branch():
 )
 def test_base_red_reads_the_latest_countable_run(conclusions, red):
     wire = Wire()
-    runs = [{"conclusion": c} for c in conclusions]
+    runs = [wf_run(c, f"c{n}", id=n) for n, c in enumerate(conclusions)]
     wire.pages_on(f"{REPO}/actions/workflows/ci.yml/runs", runs)
-    assert make(wire).base_red("ci.yml", "main") is red
+    assert (make(wire).base_red("ci.yml", "main") is not None) is red
     params = wire.sent("GET", f"{REPO}/actions/workflows/ci.yml/runs")[0][2]
     assert params["status"] == "completed"
     assert params["branch"] == "main"
@@ -571,44 +591,243 @@ def test_every_page_of_the_branch_rules_is_read():
 def test_base_red_ignores_pull_request_runs_on_a_same_named_branch():
     wire = Wire()
     runs = [
-        {"conclusion": "success", "event": "pull_request"},
-        {"conclusion": "failure", "event": "push"},
+        wf_run("success", "c1", event="pull_request", id=2),
+        wf_run("failure", "c0", id=1),
     ]
     wire.pages_on(f"{REPO}/actions/workflows/ci.yml/runs", runs)
-    assert make(wire).base_red("ci.yml", "main") is True
-    runs = [{"conclusion": "failure", "event": "pull_request"}]
+    assert make(wire).base_red("ci.yml", "main").id == 1
+    runs = [wf_run("failure", "c0", event="pull_request")]
     wire = Wire()
     wire.pages_on(f"{REPO}/actions/workflows/ci.yml/runs", runs)
-    assert make(wire).base_red("ci.yml", "main") is False
+    assert make(wire).base_red("ci.yml", "main") is None
 
 
 @pytest.mark.unit
 def test_base_red_pages_past_runs_that_do_not_count():
     wire = Wire()
     ignored = [
-        {"conclusion": "cancelled"},
-        {"conclusion": "x", "event": "pull_request"},
+        wf_run("cancelled", "c2", id=4),
+        wf_run("x", "c2", event="pull_request", id=3),
     ]
     wire.pages_on(
         f"{REPO}/actions/workflows/ci.yml/runs",
         ignored,
-        [{"conclusion": "failure", "event": "push"}],
-        [{"conclusion": "success", "event": "push"}],
+        [wf_run("failure", "c1", id=2)],
+        [wf_run("success", "c0", id=1)],
     )
-    assert make(wire).base_red("ci.yml", "main") is True
+    assert make(wire).base_red("ci.yml", "main").id == 2
     assert wire.fetched == 2
 
 
 @pytest.mark.unit
 def test_base_red_is_unknown_when_the_pages_allowed_hold_no_countable_run():
     wire = Wire()
-    page = [{"conclusion": "cancelled"}]
+    page = [wf_run("cancelled", "c0")]
     wire.pages_on(f"{REPO}/actions/workflows/ci.yml/runs", *[page] * 6)
     with pytest.raises(forge.ForgeError, match="no countable"):
         make(wire).base_red("ci.yml", "main")
     wire = Wire()
     wire.pages_on(f"{REPO}/actions/workflows/ci.yml/runs", *[page] * 5)
-    assert make(wire).base_red("ci.yml", "main") is False
+    assert make(wire).base_red("ci.yml", "main") is None
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("dispatch_first", [True, False])
+def test_base_red_lets_a_red_run_outrank_a_green_one_on_the_same_commit(
+    dispatch_first,
+):
+    """The two-second race: a lint-only push run and the full run, one commit."""
+    push = wf_run("success", "c1", event="push", id=10)
+    full = wf_run("failure", "c1", event="workflow_dispatch", id=11)
+    older = wf_run("success", "c0", event="push", id=9)
+    runs = [full, push, older] if dispatch_first else [push, full, older]
+    wire = Wire()
+    wire.pages_on(f"{REPO}/actions/workflows/ci.yml/runs", runs)
+    red = make(wire).base_red("ci.yml", "main")
+    assert red == forge.Run(
+        11,
+        "https://github.com/example/shop/actions/runs/11",
+        "c1",
+        "workflow_dispatch",
+        since="c0",
+    )
+
+
+@pytest.mark.unit
+def test_base_red_reads_only_the_newest_counted_commit():
+    wire = Wire()
+    runs = [
+        wf_run("success", "c1", id=3),
+        wf_run("failure", "c0", id=2),
+        wf_run("failure", "c1", id=1),
+    ]
+    wire.pages_on(f"{REPO}/actions/workflows/ci.yml/runs", runs)
+    assert make(wire).base_red("ci.yml", "main") is None
+
+
+@pytest.mark.unit
+def test_base_red_reads_the_deciding_commit_across_a_page_break():
+    wire = Wire()
+    wire.pages_on(
+        f"{REPO}/actions/workflows/ci.yml/runs",
+        [wf_run("success", "c1", id=3)],
+        [wf_run("failure", "c1", event="workflow_dispatch", id=2)],
+        [wf_run("success", "c0", id=1)],
+    )
+    red = make(wire).base_red("ci.yml", "main")
+    assert (red.id, red.since) == (2, "c0")
+    assert wire.fetched == 3
+
+
+@pytest.mark.unit
+def test_base_red_counts_only_the_configured_events():
+    """A lint-only push run neither reds nor greens a base whose full runs decide."""
+    runs = [
+        wf_run("success", "c2", event="push", id=4),
+        wf_run("cancelled", "c1", event="workflow_dispatch", id=3),
+        wf_run("failure", "c1", event="schedule", id=2),
+        wf_run("success", "c0", event="workflow_dispatch", id=1),
+    ]
+    wire = Wire()
+    wire.pages_on(f"{REPO}/actions/workflows/ci.yml/runs", runs)
+    events = ("workflow_dispatch", "schedule")
+    assert make(wire, base_events=events).base_red("ci.yml", "main").id == 2
+    wire = Wire()
+    wire.pages_on(f"{REPO}/actions/workflows/ci.yml/runs", runs)
+    assert make(wire).base_red("ci.yml", "main") is None
+
+
+@pytest.mark.unit
+def test_base_red_with_events_none_of_which_ran_is_unknown_past_the_cap():
+    wire = Wire()
+    page = [wf_run("failure", "c0", event="push")]
+    wire.pages_on(f"{REPO}/actions/workflows/ci.yml/runs", *[page] * 6)
+    with pytest.raises(forge.ForgeError, match="no countable"):
+        make(wire, base_events=("schedule",)).base_red("ci.yml", "main")
+
+
+@pytest.mark.unit
+def test_base_red_reads_green_when_one_commit_fills_the_pages_with_green():
+    """A quiet base with a frequent schedule: 500 green runs are a verdict."""
+    wire = Wire()
+    page = [wf_run("success", "c1")]
+    wire.pages_on(f"{REPO}/actions/workflows/ci.yml/runs", *[page] * 6)
+    assert make(wire).base_red("ci.yml", "main") is None
+
+
+@pytest.mark.unit
+def test_base_red_keeps_a_red_dispatched_run_found_before_the_cap():
+    wire = Wire()
+    first = [wf_run("failure", "c1", event="workflow_dispatch", id=9)]
+    rest = [wf_run("success", "c1")]
+    wire.pages_on(f"{REPO}/actions/workflows/ci.yml/runs", first, *[rest] * 5)
+    red = make(wire).base_red("ci.yml", "main")
+    assert (red.id, red.since) == (9, None)
+
+
+@pytest.mark.unit
+def test_a_red_push_run_is_returned_without_reading_further():
+    wire = Wire()
+    wire.pages_on(
+        f"{REPO}/actions/workflows/ci.yml/runs",
+        [wf_run("failure", "c1", id=2)],
+        [wf_run("success", "c0", id=1)],
+    )
+    red = make(wire).base_red("ci.yml", "main")
+    assert (red.id, red.since, wire.fetched) == (2, None, 1)
+
+
+@pytest.mark.unit
+def test_base_run_open_counts_only_open_runs_of_counted_events():
+    path = f"{REPO}/actions/workflows/ci.yml/runs"
+    cases = [
+        ([wf_run(None, "c1", status="in_progress")], (), True),
+        ([wf_run(None, "c1", status="queued", event="workflow_dispatch")], (), True),
+        ([wf_run("success", "c1")], (), False),
+        ([wf_run(None, "c1", event="pull_request", status="queued")], (), False),
+        ([wf_run(None, "c1", status="in_progress")], ("workflow_dispatch",), False),
+    ]
+    for runs, events, open_ in cases:
+        wire = Wire()
+        wire.on("GET", path, runs)
+        assert make(wire, base_events=events).base_run_open("ci.yml", "main", "c1") is (
+            open_
+        )
+        params = wire.sent("GET", path)[0][2]
+        assert (params["head_sha"], params["branch"]) == ("c1", "main")
+
+
+@pytest.mark.unit
+def test_merged_pulls_keeps_the_pull_requests_merged_as_that_commit():
+    wire = Wire()
+    wire.on(
+        "GET",
+        f"{REPO}/commits/{SHA}/pulls",
+        ok(
+            [
+                {"number": 5, "merge_commit_sha": SHA, "merged_at": "2026-10-14"},
+                {"number": 6, "merge_commit_sha": "c" * 40, "merged_at": "x"},
+                {"number": 7, "merge_commit_sha": SHA, "merged_at": None},
+            ]
+        ),
+    )
+    assert make(wire).merged_pulls(SHA) == [5]
+
+
+def _pulls(number, sha):
+    return ok([{"number": number, "merge_commit_sha": sha, "merged_at": "x"}])
+
+
+def _commit(sha, *parents):
+    return {"sha": sha, "parents": [{"sha": p} for p in parents]}
+
+
+@pytest.mark.unit
+def test_merged_pulls_since_walks_the_base_and_skips_a_merged_branchs_commits():
+    """Squash bypasses #7 and #8, then a hand merge #9 of a two-commit branch."""
+    wire = Wire()
+    history = [
+        _commit("m9", "s8", "b2"),
+        _commit("b2", "b1"),
+        _commit("b1", "g0"),
+        _commit("s8", "s7"),
+        _commit("s7", "g0"),
+        _commit("g0", "older"),
+    ]
+    wire.on("GET", f"{REPO}/commits", ok(history))
+    for number, sha in ((9, "m9"), (8, "s8"), (7, "s7")):
+        wire.on("GET", f"{REPO}/commits/{sha}/pulls", _pulls(number, sha))
+    assert make(wire).merged_pulls("m9", "g0") == [7, 8, 9]
+    assert wire.sent("GET", f"{REPO}/commits/b1/pulls") == []
+    assert wire.sent("GET", f"{REPO}/commits/g0/pulls") == []
+    assert wire.sent("GET", f"{REPO}/commits")[0][2]["sha"] == "m9"
+
+
+@pytest.mark.unit
+def test_merged_pulls_since_reads_a_base_commit_the_listing_crowded_out():
+    """A long merged branch fills the listing; the walk reads the rest itself."""
+    wire = Wire()
+    branch = [_commit(f"b{i}", f"b{i - 1}") for i in range(99, 0, -1)]
+    wire.on("GET", f"{REPO}/commits", ok([_commit("m20", "s19", "b99"), *branch]))
+    wire.on("GET", f"{REPO}/commits/s19", ok(_commit("s19", "s18")))
+    wire.on("GET", f"{REPO}/commits/s18", ok(_commit("s18", "g0")))
+    for number, sha in ((20, "m20"), (19, "s19"), (18, "s18")):
+        wire.on("GET", f"{REPO}/commits/{sha}/pulls", _pulls(number, sha))
+    assert make(wire).merged_pulls("m20", "g0") == [18, 19, 20]
+    assert wire.sent("GET", f"{REPO}/commits/m20") == []
+
+
+@pytest.mark.unit
+def test_merged_pulls_since_reads_the_newest_commits_of_a_long_range():
+    """The head the run tested is read first, however far back `since` is."""
+    wire = Wire()
+    history = [_commit(f"c{i}", f"c{i - 1}") for i in range(400, 300, -1)]
+    wire.on("GET", f"{REPO}/commits", ok(history))
+    for i in range(400, 370, -1):
+        wire.on("GET", f"{REPO}/commits/c{i}/pulls", _pulls(i, f"c{i}"))
+    found = make(wire).merged_pulls("c400", "c0")
+    assert found == list(range(371, 401))
+    assert wire.sent("GET", f"{REPO}/commits/c370/pulls") == []
 
 
 RUNS = f"{REPO}/actions/runs"

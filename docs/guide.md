@@ -16,11 +16,33 @@ that fits:
 | Behind, the overlap check says `disjoint` | Re-read head and base, then bypass-merge with the head pinned. No branch update and no CI run |
 | Behind, the check says `wait` | Update the branch (pinned to the head it saw), then merge when the required checks are green on the new head. A conflict from the update goes to the first row |
 | The check cannot decide | Comment why, keep the label, leave it for the owner |
-| The base branch's latest run is red | Merge nothing until it is green again |
+| The base branch is red (section 5) | With `on_red_base = "stop"` (the default): merge nothing until it is green again, and comment on each queued pull request with a link to the red run. With `"merge-tested"`: see below |
 
 A draft, a fork, and a pull request whose required checks are red or unknown
 all count as "cannot decide". A pull request whose mergeability GitHub has not
 worked out yet is skipped without a comment, and the next pass looks again.
+
+**On a red base.** With the default `on_red_base = "stop"` nothing merges, so
+the pull request that fixes the base waits for a human. With
+`on_red_base = "merge-tested"` the bot still reads the queue, and a conflicting
+pull request or one it cannot decide is handled as usual. The merge, bypass and
+update rows give way to one rule: it merges a pull request only when it is not
+behind, its required checks are green, and they ran against the base head
+itself: a plain merge of exactly the tree its checks passed on, never a bypass
+and never an update. Every other pull request is skipped with a comment that
+says why, and the pass moves on to the next one, so a younger fix can go ahead
+of older pull requests. After one such merge the pass ends, since the base
+moved and no other pull request's checks ran on the new head, and the bot
+dispatches `ci_workflow` on the base. Turn it on only when the required checks
+are as strong as `ci_workflow`; where they are lint-only, it stacks untested
+changes on a broken base.
+
+Either way, each red-base comment links the red run and is posted once per
+head and red run. When the red run is a dispatched run, it tested every merge
+since the counted run before it, so each pull request the bot bypass-merged in
+that range also gets one comment per red run linking it, since one of them is
+the likely cause. It reads back at most 30 commits along the base branch's
+own history, so in a longer range only the newest 30 merges are checked.
 
 **Two windows, two guards.** The update is pinned with `expected_head_sha`, so
 GitHub refuses it if someone pushed meanwhile. The merge is guarded by
@@ -168,11 +190,33 @@ There are two backstops:
    succeeds. When the merge lands later, or the dispatch fails, the first live
    pass that finds the pull request merged dispatches once for it. The
    landing's own push to the base branch starts that pass.
-2. While the base branch's latest completed run of that workflow is **red**, it
-   merges nothing. Pull request, cancelled, skipped and neutral runs are
-   ignored, and a branch with no run at all counts as not red. If the first 500
-   completed runs hold none that counts, the pass stops with an error rather
-   than guess.
+2. While the base branch is **red**, it merges nothing, or with
+   `on_red_base = "merge-tested"` only the pull requests whose checks ran on
+   the base head (section 1). The colour comes from the completed runs of that
+   workflow on the base branch that count: those whose event is in
+   `base_events` (by default every event but `pull_request` and
+   `pull_request_target`), and that are not cancelled, skipped or neutral. The
+   commit of the newest counted run decides, and on that commit a red run
+   outranks a green one, so a quick lint run cannot hide a red full run on the
+   same commit, whichever started first. A branch with no run at all counts as
+   not red. If the first 500 completed runs hold none that counts, the pass
+   stops with an error rather than guess; if they all sit on one commit with
+   no red run among them, that commit counts as green.
+
+   When the base reads red but its head has moved past the red run (a merge by
+   hand, or a merge on a red base) and no counted run is queued or running on
+   the new head, the bot dispatches `ci_workflow` on the base once, so the new
+   head gets a verdict of its own. Before it does, it waits a few seconds and
+   looks again, since the push that moved the base usually starts a counted
+   run of its own; when one has started, it does not dispatch.
+
+   What the bot cannot see is whether a counted run ran your full suite. If the
+   workflow skips its tests on `push`, a green push run on a commit nobody
+   tested still turns the base green. Set `base_events` to the events whose
+   runs are full, such as `["workflow_dispatch", "schedule"]`. The list must
+   include `workflow_dispatch`: the bot tests the base by dispatching, and runs
+   it cannot count would never turn the base green. While the newest full run
+   is still going, the previous one decides.
 
 Add `shared_risk` and `added_together` rules for the places where your project
 couples files that the diff cannot show, such as lockfiles, migrations and
@@ -190,6 +234,8 @@ reason stops the run with exit code 2.
 | `ci_workflow` | string | required | The workflow file to dispatch after a bypass, and to read for red |
 | `merge_method` | `"merge"` or `"squash"` | `"merge"` | How a pull request is merged |
 | `dry_run` | boolean | `true` | Post what it would do and change nothing |
+| `on_red_base` | `"stop"` or `"merge-tested"` | `"stop"` | On a red base, merge nothing, or merge only up-to-date pull requests whose required checks ran on the base head (section 1) |
+| `base_events` | list of strings | every event but pull requests | The events whose `ci_workflow` runs decide whether the base is red (section 5); must include `workflow_dispatch`; `pull_request` and `pull_request_target` are refused, and an event name this version does not know gets a warning |
 | `required_checks` | list of strings | `[]` | Check names that must be green; empty reads the base branch rules |
 | `[[shared_risk]]` | tables | none | One-sided rules: `pattern` and `reason` |
 | `[[added_together]]` | tables | none | Two-sided rules: `pattern` and `reason` |

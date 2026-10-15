@@ -28,6 +28,13 @@ _LIVE = {
         "Carl Mergé: I cannot decide this PR yet: {reason}. I left {label} on it."
     ),
     "dispatch": "Carl Mergé: I will run {workflow} on {base} after this pass.",
+    "base-red": (
+        "Carl Mergé: I am not merging this PR into {base} while the latest "
+        "{workflow} run on {base} is red: {run_url}. I left {label} on it."
+    ),
+    "red-after-bypass": (
+        "Carl Mergé: the {workflow} run on {base} after this merge is red: {run_url}."
+    ),
 }
 _DRY = {
     "conflict": (
@@ -47,7 +54,22 @@ _DRY = {
         "Carl Mergé cannot decide this PR yet: {reason}. I would leave {label} on it."
     ),
     "dispatch": "Carl Mergé would run {workflow} on {base} after this pass.",
+    "base-red": (
+        "Carl Mergé would not merge this PR into {base} while the latest "
+        "{workflow} run on {base} is red: {run_url}. I would leave {label} on it."
+    ),
+    "red-after-bypass": (
+        "Carl Mergé would point out that the {workflow} run on {base} after this "
+        "merge is red: {run_url}."
+    ),
 }
+
+
+def key(action: str, head: str, *, new_head: str = "", run_id: int = 0) -> str:
+    """What a comment's marker carries: the head, or what it is posted once per."""
+    if action == "update":
+        return new_head or head
+    return f"{head}.{run_id}" if run_id else head
 
 
 def marker(action: str, head: str, *, dry: bool = False) -> str:
@@ -75,6 +97,8 @@ def render(
     reason: str = "",
     workflow: str = "",
     lines: Iterable[str] = (),
+    run_id: int = 0,
+    run_url: str = "",
 ) -> str:
     template = (_DRY if dry else _LIVE)[action]
     first = template.format(
@@ -84,9 +108,10 @@ def render(
         new_head=new_head[:8],
         reason=one_line(reason),
         workflow=workflow,
+        run_url=run_url,
     )
     if dry:
         first = f"Dry run: {first}"
     detail = [one_line(line, 200) for line in list(lines)[:MAX_LINES]]
-    marked = (new_head or head) if action == "update" else head
+    marked = key(action, head, new_head=new_head, run_id=run_id)
     return "\n".join([first, *detail, "", marker(action, marked, dry=dry)])

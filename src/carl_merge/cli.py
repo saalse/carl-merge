@@ -54,6 +54,8 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         print(f"carl-merge: {exc}", file=sys.stderr)
         return 2
+    for warning in config.warnings:
+        print(f"carl-merge: warning: {warning}", file=sys.stderr)
     missing = [name for name in ENV if not os.environ.get(name)]
     if missing:
         print(f"carl-merge: set {', '.join(missing)}", file=sys.stderr)
@@ -67,6 +69,7 @@ def main(argv: list[str] | None = None) -> int:
         app_slug=os.environ["CARL_MERGE_APP_SLUG"],
         base_branch=config.base_branch,
         required_checks=config.required_checks,
+        base_events=config.base_events,
     )
     try:
         run_pass(forge, config, _overlap(config), log=print)

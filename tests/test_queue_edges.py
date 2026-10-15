@@ -12,6 +12,7 @@ from carl_merge.forge import (
     MergeRefused,
     MergeTimeout,
     Pull,
+    Run,
 )
 from carl_merge.overlap import Decision
 from carl_merge.queue import OWED_LABEL, Action, run_pass
@@ -59,9 +60,9 @@ class Fake:
         return self.base
 
     def base_red(self, workflow, branch):
-        return self.red_after_merges is not None and len(self.merges) >= (
-            self.red_after_merges
-        )
+        if self.red_after_merges is None or len(self.merges) < self.red_after_merges:
+            return None
+        return Run(7, "https://github.com/example/shop/actions/runs/7", "m1", "push")
 
     def checks(self, number, sha):
         return self.checks_by_sha.get(sha, "pending")

@@ -10,11 +10,53 @@ REQUIRED = ("ready_label", "base_branch", "ci_workflow")
 OPTIONAL = (
     "merge_method",
     "dry_run",
+    "on_red_base",
+    "base_events",
     "required_checks",
     "shared_risk",
     "added_together",
 )
 MERGE_METHODS = ("merge", "squash")
+ON_RED_BASE = ("stop", "merge-tested")
+PULL_REQUEST_EVENTS = ("pull_request", "pull_request_target")
+# The events that start GitHub Actions workflow runs today. A name outside the
+# list gets a warning, not an error: it is most likely misspelt and would count
+# nothing, but GitHub may have added it since this release.
+WORKFLOW_EVENTS = (
+    "branch_protection_rule",
+    "check_run",
+    "check_suite",
+    "create",
+    "delete",
+    "deployment",
+    "deployment_status",
+    "discussion",
+    "discussion_comment",
+    "dynamic",
+    "fork",
+    "gollum",
+    "issue_comment",
+    "issues",
+    "label",
+    "merge_group",
+    "milestone",
+    "page_build",
+    "public",
+    "pull_request",
+    "pull_request_review",
+    "pull_request_review_comment",
+    "pull_request_target",
+    "push",
+    "registry_package",
+    "release",
+    "repository_dispatch",
+    "schedule",
+    "status",
+    "watch",
+    "workflow_call",
+    "workflow_dispatch",
+    "workflow_run",
+)
 
 
 class ConfigError(ValueError):
@@ -34,9 +76,13 @@ class Config:
     ci_workflow: str
     merge_method: str = "merge"
     dry_run: bool = True
+    on_red_base: str = "stop"
+    base_events: tuple[str, ...] = ()
     required_checks: tuple[str, ...] = ()
     shared_risk: tuple[Rule, ...] = ()
     added_together: tuple[Rule, ...] = ()
+    # What parsing noticed but did not refuse, for the command line to print.
+    warnings: tuple[str, ...] = ()
 
 
 def _text(value: object, where: str) -> str:
@@ -66,6 +112,31 @@ def _rules(data: dict, key: str) -> tuple[Rule, ...]:
     return tuple(rules)
 
 
+def _base_events(data: dict, warnings: list[str]) -> tuple[str, ...]:
+    """The events whose runs decide the base branch's colour; empty means all."""
+    if "base_events" not in data:
+        return ()
+    events = data["base_events"]
+    if not isinstance(events, list) or not events:
+        raise ConfigError("base_events must be a non-empty list of event names")
+    names = tuple(_text(event, "base_events entry") for event in events)
+    for name in names:
+        if name not in WORKFLOW_EVENTS:
+            warnings.append(
+                f"base_events: {name} is not a GitHub Actions event this version "
+                "knows; check the spelling, or runs of it will count nothing"
+            )
+        if name in PULL_REQUEST_EVENTS:
+            raise ConfigError(f"base_events: {name} runs never test the base branch")
+    if "workflow_dispatch" not in names:
+        # The bot tests the base by dispatching; uncounted, its own runs would
+        # decide nothing and each pass would dispatch again.
+        raise ConfigError(
+            "base_events must include workflow_dispatch, the runs the bot starts"
+        )
+    return names
+
+
 def parse(text: str) -> Config:
     try:
         data = tomllib.loads(text)
@@ -83,6 +154,11 @@ def parse(text: str) -> Config:
     dry_run = data.get("dry_run", True)
     if not isinstance(dry_run, bool):
         raise ConfigError("dry_run must be true or false")
+    on_red_base = data.get("on_red_base", "stop")
+    if on_red_base not in ON_RED_BASE:
+        raise ConfigError(f"on_red_base must be one of {', '.join(ON_RED_BASE)}")
+    warnings: list[str] = []
+    base_events = _base_events(data, warnings)
     checks = data.get("required_checks", [])
     if not isinstance(checks, list):
         raise ConfigError("required_checks must be a list of names")
@@ -92,9 +168,12 @@ def parse(text: str) -> Config:
         ci_workflow=_text(data["ci_workflow"], "ci_workflow"),
         merge_method=method,
         dry_run=dry_run,
+        on_red_base=on_red_base,
+        base_events=base_events,
         required_checks=tuple(_text(c, "required_checks entry") for c in checks),
         shared_risk=_rules(data, "shared_risk"),
         added_together=_rules(data, "added_together"),
+        warnings=tuple(warnings),
     )
 
 
