@@ -62,7 +62,9 @@ checks ran:
 "Since its checks ran" means since the tested base: the base that the required
 checks' own Actions runs were tested against. When those runs do not all agree
 on one base, or a required check is not an Actions run, there is nothing safe to
-compare against, so the pull request takes the update row instead.
+compare against, so the pull request takes the update row instead. A required
+check met by a commit status is never an Actions run: a status carries no base,
+so while one is required, every behind pull request takes the update row.
 
 After each merge the bot comments on the pull request. Each comment ends with a
 hidden marker, and the bot posts each comment once per head.
@@ -175,6 +177,15 @@ as an `Integration` actor in **`pull_request`** mode:
 
 The bot sets the bypass flag on exactly one row: the `disjoint` row. Every other
 merge asks GitHub to enforce all the rules.
+
+A required check can be pinned to an app, the ruleset's "expected source".
+The bot reads it as GitHub does: the check is met only by a check run or a
+commit status that app made, and the newest of each decides. A commit status
+names its creator as the app's bot user (`<slug>[bot]`), so the bot looks the
+slug up with `GET /apps/{slug}` and compares the app id. A status of the same
+name from a person or another app never meets the check. When the slug cannot
+be looked up, as for a private app installed elsewhere, its statuses do not
+count, and the check stays pending.
 
 ## 5. What it cannot see
 

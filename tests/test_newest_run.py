@@ -121,6 +121,8 @@ def test_a_newer_run_from_another_app_does_not_supersede_a_pinned_one():
         def pages(self, path, *, params=None, key=None):
             if path.endswith("/rules/branches/main"):
                 return pinned_rules
+            if path.endswith("/statuses"):
+                return []
             return super().pages(path, params=params, key=key)
 
     older = run(10, "lint", suite=1, conclusion="failure", app=222)

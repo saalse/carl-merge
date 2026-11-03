@@ -63,6 +63,14 @@ def _status_state(status: dict) -> str:
     return {"success": "green", "pending": "pending"}.get(status["state"], "red")
 
 
+def _bot_slug(creator: dict | None) -> str | None:
+    """The app slug behind a status creator, or None when a person made it."""
+    if not creator or creator.get("type") != "Bot":
+        return None
+    login = creator.get("login") or ""
+    return login.removesuffix("[bot]") if login.endswith("[bot]") else None
+
+
 class Wire(Protocol):
     def request(self, method: str, path: str, **kwargs: Any) -> Any: ...
 
@@ -126,6 +134,7 @@ class RestForge:
         self._required = required_checks
         self._base_events = base_events
         self._listed: dict[int, str] = {}
+        self._app_ids: dict[str, int | None] = {}
         self._sleep = sleep
 
     def _get(self, path: str, **params: Any) -> Any:
@@ -271,12 +280,45 @@ class RestForge:
             key="check_runs",
         )
 
+    def _app_id(self, slug: str) -> int | None:
+        """The id of the app with this slug, or None when no such app is visible."""
+        if slug not in self._app_ids:
+            reply = self._wire.request("GET", f"/apps/{_q(slug)}", expect=(200, 404))
+            self._app_ids[slug] = reply.data.get("id") if reply.status == 200 else None
+        return self._app_ids[slug]
+
+    def _pinned_status(
+        self, statuses: list[dict], name: str, pinned: int
+    ) -> dict | None:
+        """The newest commit status of this name that the pinned app made, or None.
+
+        The forge counts a status as meeting a pinned requirement only when the
+        pinned app made it, so a status from anyone else is passed over, as a
+        check run from another app is.
+        """
+        found = []
+        for status in statuses:
+            if status["context"] != name:
+                continue
+            slug = _bot_slug(status.get("creator"))
+            if slug is not None and self._app_id(slug) == pinned:
+                found.append(status)
+        return max(found, key=lambda status: status["id"], default=None)
+
     def checks(self, number: int, sha: str) -> str:
         needs = self._requirements()
         if not needs:
             return "unknown"
         runs = self._check_runs(sha)
         statuses = self._get(f"/commits/{sha}/status", per_page=100)["statuses"]
+        # The combined status names no creator; a pinned requirement needs it.
+        made = (
+            self._wire.pages(
+                f"{self._repo}/commits/{sha}/statuses", params={"per_page": 100}
+            )
+            if any(pinned is not None for _, pinned in needs)
+            else []
+        )
         states = []
         for name, pinned in needs:
             newest = _newest(runs, name, pinned)
@@ -287,6 +329,8 @@ class RestForge:
                     for status in statuses
                     if status["context"] == name
                 ]
+            elif status := self._pinned_status(made, name, pinned):
+                found.append(_status_state(status))
             states.append(max(found or ["pending"], key=_SEVERITY.get))
         return max(states, key=_SEVERITY.get)
 
