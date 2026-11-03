@@ -184,6 +184,7 @@ def checks_wire(runs, statuses=(), rules=None):
     wire = Wire()
     wire.on("GET", f"{REPO}/commits/{SHA}/check-runs", list(runs))
     wire.on("GET", f"{REPO}/commits/{SHA}/status", ok({"statuses": list(statuses)}))
+    wire.on("GET", f"{REPO}/commits/{SHA}/statuses", list(statuses))
     if rules is not None:
         wire.on("GET", f"{REPO}/rules/branches/main", rules)
     return wire
@@ -562,7 +563,7 @@ def test_a_failed_check_from_another_app_does_not_fail_a_pinned_one():
 
 
 @pytest.mark.unit
-def test_a_commit_status_never_meets_a_pinned_check():
+def test_a_commit_status_no_app_made_never_meets_a_pinned_check():
     wire = checks_wire(
         [], statuses=[{"context": "lint", "state": "success"}], rules=pinned_rules(222)
     )
@@ -582,6 +583,7 @@ def test_every_page_of_the_branch_rules_is_read():
     wire.pages_on(rules, [{"type": "pull_request"}], pinned_rules(222))
     wire.on("GET", f"{REPO}/commits/{SHA}/check-runs", [app_run("lint", 111)])
     wire.on("GET", f"{REPO}/commits/{SHA}/status", ok({"statuses": []}))
+    wire.on("GET", f"{REPO}/commits/{SHA}/statuses", [])
     assert make(wire).checks(1, SHA) == "pending"
     assert wire.fetched == 2
     assert wire.sent("GET", rules)[0][2]["per_page"] == 100
