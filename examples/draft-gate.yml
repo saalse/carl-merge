@@ -1,0 +1,46 @@
+# The parts of .github/workflows/ci.yml that a draft gate needs, in the
+# adopting repository. Put your own lint and suite in place of the echo steps.
+#
+# On a draft only `lint` runs. Its first step posts the commit status
+# `draft gate`: pending on a draft, success once the pull request is ready.
+# It tells a reader the suite has not run; leave it out of the required
+# checks. The guide's section 4 says why.
+name: CI
+on:
+  pull_request:
+    # `ready_for_review` is not a default type. Without it, marking a pull
+    # request ready starts no run, and the gate stays pending.
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      # First, so that no failing step can stop it.
+      - name: Post the draft gate
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          STATE: ${{ github.event.pull_request.draft && 'pending' || 'success' }}
+          DESCRIPTION: "${{ github.event.pull_request.draft && 'Suite skipped on a draft: mark the pull request ready to run it' || 'Not a draft: the suite runs on this head' }}"
+        run: >-
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$SHA"
+          -f state="$STATE" -f context="draft gate" -f description="$DESCRIPTION"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: echo "your lint here"
+  test:
+    # Skipped on a draft. A job skipped this way reports success, which is why
+    # the gate exists.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: echo "your suite here"

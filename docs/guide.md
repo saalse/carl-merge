@@ -185,7 +185,41 @@ names its creator as the app's bot user (`<slug>[bot]`), so the bot looks the
 slug up with `GET /apps/{slug}` and compares the app id. A status of the same
 name from a person or another app never meets the check. When the slug cannot
 be looked up, as for a private app installed elsewhere, its statuses do not
-count, and the check stays pending.
+count, and the check stays pending. Before 0.2.1 the bot read a pinned check
+from check runs only, so a pinned commit status stayed pending and nothing
+merged.
+
+### Skipping the suite on a draft
+
+If review happens while a pull request is a draft, you may not want the full
+suite to run on every fix-up push. Skipping its jobs with a job-level `if:`
+has a trap: GitHub reports a job skipped that way as **success**. A draft then
+reads all green though nothing ran, and a person or an agent reading its
+checks takes it for tested.
+
+A draft gate says what happened instead. A cheap job that runs on every pull
+request event posts one commit status, `draft gate`, on the head as its first
+step: `pending` with "suite skipped on a draft" on a draft, `success` on any
+other event. When the pull request is marked ready, the `ready_for_review`
+event starts a run in which the suite's jobs run and report for themselves,
+and the gate turns `success`. `examples/draft-gate.yml` has the parts.
+
+- Add `ready_for_review` to the workflow's `pull_request` types. It is not one
+  of the defaults, and without it marking a pull request ready starts no run.
+- Post the status first in its job, so no failing step can stop it.
+
+**Post it; do not make it a required check.** A draft needs no merge guard:
+GitHub refuses to merge a draft, and this bot counts a draft as one it cannot
+decide (section 1). A required gate would add no safety, and it costs this
+bot its bypass row. `draft gate` is a commit status, and a status carries no
+base, so while one is required no behind pull request has a tested base to
+compare against, and every one takes the update row: a branch update and a
+full run, even where the overlap check would have said `disjoint`.
+
+If you make it required anyway, pin it to GitHub Actions, since a status
+posted with the job's `GITHUB_TOKEN` is made by GitHub Actions; and to remove
+it later, take it off the ruleset before you delete the step, or every pull
+request waits on a status nobody posts.
 
 ## 5. What it cannot see
 
