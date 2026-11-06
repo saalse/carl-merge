@@ -21,6 +21,19 @@ permissions:
   contents: read
 jobs:
   merge:
+    # A `workflow_run` trigger starts this job for every completed run, even
+    # one whose own jobs were all skipped, and each start is a billed minute.
+    # Run only when the triggering run succeeded, or when it was a CI run on
+    # the base branch (any event in `base_events`, which by default is every
+    # event but pull requests), so a red base still gets its comments. Rename
+    # `CI` to your `ci_workflow`'s `name:`, and match `base_events` if you
+    # narrowed it (docs/guide.md, section 2).
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success' ||
+      (github.event.workflow_run.name == 'CI' &&
+       github.event.workflow_run.event != 'pull_request' &&
+       github.event.workflow_run.event != 'pull_request_target')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

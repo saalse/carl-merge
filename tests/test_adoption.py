@@ -79,6 +79,23 @@ def test_example_workflow_is_serial_and_uses_the_app_token():
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    "relpath", ["examples/carl-merge.yml", ".github/workflows/carl-merge.yml"]
+)
+def test_workflow_run_starts_no_job_for_a_run_that_found_nothing(relpath):
+    workflow = _text(relpath)
+    condition = re.search(r"^    if: >-\n((?:      .*\n)+)", workflow, re.MULTILINE)
+    assert condition, f"{relpath}: the merge job has no job-level if:"
+    text = " ".join(condition.group(1).split())
+    assert "github.event_name != 'workflow_run'" in text, "other triggers must pass"
+    assert "github.event.workflow_run.conclusion == 'success'" in text
+    for event in ("pull_request", "pull_request_target"):
+        assert f"github.event.workflow_run.event != '{event}'" in text, (
+            "a red run on the base must still wake the bot"
+        )
+
+
+@pytest.mark.unit
 def test_the_cli_refuses_to_run_without_the_app_token(monkeypatch, tmp_path, capsys):
     assert importlib.util.find_spec("carl_merge") is not None, (
         "carl_merge does not exist"

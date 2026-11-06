@@ -91,6 +91,18 @@ A label added by a job using its own `GITHUB_TOKEN` starts no workflow run. If
 a workflow applies your ready label, list that workflow under `workflow_run`
 in the example, so the bot runs when the labelling finishes.
 
+Keep the example's job-level `if:` when you add one. GitHub starts a
+`workflow_run` job for every completed run of a listed workflow, whatever its
+conclusion, and a run whose own jobs were all skipped still completes. Each of
+those starts is a billed minute that finds nothing new. The `if:` lets the job
+run only when the triggering run succeeded, or when it was a `ci_workflow` run
+on the base branch, red or green, since those set the base's colour (section
+5). Write your `ci_workflow`'s `name:` where the example says `CI`, and list
+the same events as `base_events` if you narrowed it. A labelling workflow that
+always follows a green pull request run lets you skip the CI runs from
+`pull_request` as well; leave them in otherwise, since a green run on a
+labelled pull request is what lets the bot merge it.
+
 The job checks out the default branch and never runs a pull request's code. It
 only fetches pull request heads as git objects to run `git diff`, which is why
 `pull_request_target` is safe here.
