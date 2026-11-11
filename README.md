@@ -166,3 +166,5 @@ Every step, every permission and every setting is in the
 ## 📄 Licence
 
 [MIT](https://github.com/saalse/carl-merge/blob/main/LICENSE). Use it, fork it, and adapt it to your own forge.
+
+Made by [Alex Samson](https://saalse.com).
